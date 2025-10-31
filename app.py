@@ -22,6 +22,7 @@ app.add_middleware(
 @app.get("/")
 def read_root(
     bend_url: str = Query(...),
+    gif_link: str = Query(...),
     fend_url: str = Query(...),
     character: str = Query(...),
     visa_profile: str = Query(..., description="JSON string of visa profile")
@@ -56,6 +57,7 @@ def read_root(
 
     # Prepare params for redirect (re-encode JSON safely)
     query_params = {
+        "gif_link" : gif_link,
         "bend_url": bend_url,
         "fend_url": fend_url,
         "character": character,
