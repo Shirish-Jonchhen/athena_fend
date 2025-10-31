@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voyage Process Athena - Demo</title>
+  <link rel="stylesheet" href="./css/style.css" />
+  <style>
+    .overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.6);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+
+    /* Circular loader */
+    .loader {
+      border: 5px solid rgba(255, 255, 255, 0.2);
+      border-top: 5px solid #00bcd4;
+      border-radius: 50%;
+      width: 60px;
+      height: 60px;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      0% {
+        transform: rotate(0deg);
+      }
+
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+
+
+    <div class="card grid">
+      <div>
+        <h1>
+          Voyage Process Athena - Demo <span id="statePill" class="pill warn">disconnected</span>
+        </h1>
+
+
+        <div class="row" style="margin: 8px 0 16px; gap:8px">
+          <label>
+            Athena API:
+            <input id="apiAthena" type="text" value="https://d5f196a770c2.ngrok-free.app" style="width:220px">
+          </label>
+          <label>
+            Echo API:
+            <input id="apiEcho" type="text" value="http://127.0.0.1:8080" style="width:220px">
+          </label>
+        </div>
+
+        <div class="status" id="status">Idle.</div>
+
+        <div class="row" style="gap:12px; align-items:center; margin:6px 0 10px">
+          <div id="stateBadge" class="pill warn">state: unknown</div>
+          <div id="turnBadge" class="pill">turn: —</div>
+        </div>
+
+        <div class="log" id="log"></div>
+
+        <div class="transcript" style="margin-top:8px">
+          <div style="font-weight:600; margin-bottom:6px">Transcript</div>
+          <div id="final_text" style="min-height:32px;"></div>
+          <div id="interim_text" style="opacity:.7; font-style:italic; margin-top:6px;"></div>
+        </div>
+
+
+
+      </div>
+    </div>
+    <div class="character_video">
+      <div class="row" style="margin: 8px 0 16px">
+        <button id="btnConnect">Connect</button>
+        <button id="btnMicOff" class="secondary" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" x2="12" y1="19" y2="23"></line>
+            <line x1="8" x2="16" y1="23" y2="23"></line>
+          </svg>
+        </button>
+        <button id="btnMicOn" class="danger" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <line x1="2" x2="22" y1="2" y2="22"></line>
+            <path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2"></path>
+            <path d="M5 10v2a7 7 0 0 0 12 5"></path>
+            <path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"></path>
+            <path d="M9 9v3a3 3 0 0 0 5.12 2.12"></path>
+            <line x1="12" x2="12" y1="19" y2="23"></line>
+            <line x1="8" x2="16" y1="23" y2="23"></line>
+          </svg>
+        </button>
+        <button id="btnBye" class="secondary" disabled>X</button>
+      </div>
+      <div class="video-shell">
+        <video id="avatarVideo" autoplay playsinline muted></video>
+        <!-- crossorigin is fine for blob: URLs and keeps CORS happy if needed -->
+        <video id="overlayVideo" class="overlay-video" playsinline crossorigin="anonymous"></video>
+        <div class="video-status" id="videoStatus">Waiting for connection…</div>
+      </div>
+      <div class="reply" id="characterReply">
+        <div class="reply-label">Athena</div>
+        <div class="reply-text" id="characterReplyText">Connecting...</div>
+      </div>
+
+    </div>
+    <video id="localVideo" autoplay playsinline muted></video>
+    <button id="startButton">Start Camera</button>
+
+    <div class="report-card" id="reportCard">
+
+      <img src="./asset/images/glow_loading.webp" class="loading-1" alt="" height="350">
+      <img src="./asset/images/glow_loading_2.webp" alt="" class="loading-2" width="300">
+      <div class="report-header">
+        Keep Calm
+      </div>
+      <div class="report-subheader">
+        We are generating your report...
+      </div>
+
+      <!-- Lottei Image -->
+      <div class="lottie">
+        <lottie-player src="./asset/lottie/submission_1.json" background="transparent"
+          speed="1" style="width: 300px; height: 300px;" loop autoplay>
+        </lottie-player>
+      </div>
+
+       <div class="tips-header">
+        Pro Interview Tips
+      </div>
+
+       <div class="tips-text">
+        Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+      </div>
+
+      <div class="report-progress-bar" aria-hidden="true">
+        <div id="reportProgressFill" class="report-progress-fill" style="width: 0%;"></div>
+      </div>
+      <!-- <div class="report-progress-info" id="reportProgressInfo">Awaiting report generation…</div>
+      <div class="report-result is-hidden" id="reportResult">
+        <div class="report-summary" id="reportSummary"></div>
+        <div class="report-sections" id="reportSections"></div>
+        <div class="report-recordings" id="reportRecordings"></div>
+      </div> -->
+    </div>
+
+
+  </div>
+  <div class="overlay" id="loadingOverlay">
+    <div class="loader"></div>
+  </div>
+  <script type="module" src="./js/app.js"></script>
+  <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
+
+</body>
+
+</html>

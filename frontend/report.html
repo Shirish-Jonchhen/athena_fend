@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voyage Interview Report</title>
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+
+<body class="report-body">
+  <div class="report-page">
+    <header class="report-hero">
+      <div class="report-hero-text">
+        <h1>Interview Report</h1>
+        <p class="report-meta" id="reportMeta">Loading report details…</p>
+      </div>
+      <div class="hero-actions">
+        <button id="backButton" class="secondary">Start New Interview</button>
+      </div>
+    </header>
+
+    <main class="report-content">
+      <div id="reportLoader" class="report-loader">
+        <div class="spinner" aria-hidden="true"></div>
+        <p>Preparing the latest report…</p>
+      </div>
+
+      <div id="reportEmpty" class="report-empty is-hidden">
+        <p>No report data found for this session.</p>
+        <button id="returnButton">Back to Interview</button>
+      </div>
+
+      <section id="summarySection" class="report-card is-hidden">
+        <div class="report-card-header">
+          <h2>Overview</h2>
+        </div>
+        <div id="reportSummary" class="report-summary"></div>
+      </section>
+
+      <section id="sectionsSection" class="report-card is-hidden">
+        <div class="report-card-header">
+          <h2>Detailed Review</h2>
+        </div>
+        <div id="reportSections" class="report-sections"></div>
+      </section>
+
+      <section id="recordingsSection" class="report-card is-hidden">
+        <div class="report-card-header">
+          <h2>Interview Responses</h2>
+        </div>
+        <div id="reportRecordings" class="report-recordings"></div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="./js/report.js"></script>
+</body>
+
+</html>
