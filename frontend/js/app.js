@@ -697,6 +697,7 @@ async function bye() {
   sessionId = null;
   clearMedia();
   setUIConnected(false);
+  window.location.href = "https://nexsewa.com.np";
   log("Closed connection.");
 }
 
