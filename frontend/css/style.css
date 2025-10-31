@@ -121,17 +121,16 @@ h1 {
   color: #9cc2ff;
   border: 1px solid #1f2a44;
 }
-.log {
-  margin-top: 14px;
-  padding: 12px;
-  border-radius: 10px;
-  background: #0f1424;
-  border: 1px solid #1f2a44;
-  height: 220px;
-  overflow: auto;
-  font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;
-  font-size: 13px;
-  white-space: pre-wrap;
+#log {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  width: 90%;
+  max-width: 700px;
+  max-height: 60vh;
+  display: none;
 }
 .pill {
   display: inline-block;
@@ -787,7 +786,7 @@ h1 {
 }
 
 
-#localVideo {
+#localRender {
   position: fixed;
   top: 20px;
   right: 20px;

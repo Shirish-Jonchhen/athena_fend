@@ -65,6 +65,45 @@ const REPORT_STORAGE_KEY = "voyage_latest_report";
 let reportRedirectTimer = null;
 let reportCompleteHandled = false;
 
+
+
+// ===== Dynamic configuration from query params =====
+const urlParams = new URLSearchParams(window.location.search);
+
+const BEND_URL = urlParams.get("bend_url") || getAthenaBase();   // backend (Athena API)
+const FEND_URL = urlParams.get("fend_url") || window.location.origin; // frontend base
+let VISA_PROFILE_Q;
+try {
+  const visaParam = urlParams.get("visa_profile");
+  VISA_PROFILE_Q = visaParam ? JSON.parse(visaParam) : VISA_PROFILE;
+} catch (err) {
+  console.warn("Invalid visa_profile JSON in query params:", err);
+  VISA_PROFILE_Q = VISA_PROFILE;
+}
+const CHARACTER_Q = urlParams.get("character") || DEFAULT_CHARACTER;
+
+// Override config functions dynamically
+function getDynamicAthenaBase() {
+  return BEND_URL?.trim().replace(/\/$/, "");
+}
+
+const ACTIVE_CHARACTER = CHARACTER_Q;
+const ACTIVE_VISA_PROFILE = VISA_PROFILE_Q;
+
+// (Optional) Auto-fill UI field for backend URL if present
+const apiAthenaInput = document.getElementById("apiAthena");
+if (apiAthenaInput && BEND_URL) {
+  apiAthenaInput.value = BEND_URL;
+}
+
+console.log("[Config] Loaded from query:", {
+  bend_url: BEND_URL,
+  fend_url: FEND_URL,
+  visa_profile: ACTIVE_VISA_PROFILE,
+  character: ACTIVE_CHARACTER
+});
+
+
 // ===== utils =====
 
 function extractTokenFromUrl(url) {
@@ -384,7 +423,7 @@ function setUIConnected(connected) {
     resetReportUI();
     reportCompleteHandled = false;
     setVideoStatus("Ready. Start speaking or wait for Athena…", true);
-    startCamera();
+    // startCamera();
     micOn();
   }
 }
@@ -492,6 +531,15 @@ async function connect() {
       video: { width: 640, height: 360, frameRate: 30 },
     });
 
+
+    // Attach local stream to video element for preview
+    const localRender = document.getElementById("localRender");
+    if (localRender) {
+      localRender.srcObject = localStream;
+      localRender.muted = true; // mute self to avoid echo
+      localRender.play().catch(() => console.warn("Local video autoplay blocked"));
+    }
+
     const localAudioTrack = localStream.getAudioTracks()[0] || null;
     const localVideoTrack = localStream.getVideoTracks()[0] || null;
 
@@ -534,14 +582,14 @@ async function connect() {
     // ensure we send a stable client id (per tab) to the backend
     clientId = clientId || getClientId();
 
-    const res = await fetch(`${getAthenaBase()}/api/offer`, {
+    const res = await fetch(`${getDynamicAthenaBase()}/api/offer`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sdp: pc.localDescription.sdp,
         type: pc.localDescription.type,
-        character: DEFAULT_CHARACTER,
-        visa_profile: VISA_PROFILE,
+        character: ACTIVE_CHARACTER,
+        visa_profile: ACTIVE_VISA_PROFILE,
         client_id: clientId,
       }),
     });
@@ -696,7 +744,7 @@ function handleLog(data) {
 function handleReportProgress(data) {
   if (!data) return;
 
-   reportCardEl.style.display = 'flex';
+  reportCardEl.style.display = 'flex';
   const rawProgress = Number(data.progress);
   const infoText = (data.info || "").toString();
 
@@ -708,7 +756,7 @@ function handleReportProgress(data) {
       resetReportUI({ keepStatus: false });
     }
     const nextProgress = restart ? normalized : Math.max(reportState.progress, normalized);
-    reportCardEl.style.display= 'flex';
+    reportCardEl.style.display = 'flex';
     updateReportProgress(nextProgress, infoText);
     log(`[report] progress ${nextProgress.toFixed(0)}%${infoText ? ` - ${infoText}` : ""}`);
   } else if (infoText) {
@@ -776,27 +824,27 @@ window.addEventListener("beforeunload", () => {
 
 
 //
-const startButton = document.getElementById("startButton");
-const localVideo = document.getElementById("localVideo");
+// const startButton = document.getElementById("startButton");
+// const localVideo = document.getElementById("localVideo");
 
-startButton.addEventListener("click", async () => {
-  startCamera();
-});
+// startButton.addEventListener("click", async () => {
+//   startCamera();
+// });
 
 
-async function startCamera() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: false // set to true if you want mic too
+// async function startCamera() {
+//   try {
+//     const stream = await navigator.mediaDevices.getUserMedia({
+//       video: true,
+//       audio: false // set to true if you want mic too
 
-    });
-    localVideo.srcObject = stream;
-  } catch (err) {
-    console.error("Error accessing media devices.", err);
-    alert("Camera access denied or not available.");
-  }
-}
+//     });
+//     localVideo.srcObject = stream;
+//   } catch (err) {
+//     console.error("Error accessing media devices.", err);
+//     alert("Camera access denied or not available.");
+//   }
+// }
 
 
 connect();
