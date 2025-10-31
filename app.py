@@ -3,7 +3,9 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from urllib.parse import urlencode
+import base64
 import json
+import re
 
 app = FastAPI(title="WebRTC Server")
 
@@ -31,7 +33,24 @@ def read_root(
 
     # Try parsing visa_profile to verify valid JSON
     try:
-        visa_data = json.loads(visa_profile)
+
+        # 1. Quote keys
+        raw_str = re.sub(r'(\w+):', r'"\1":', visa_profile)
+
+        # 2. Quote simple unquoted string values (naive approach)
+        raw_str = re.sub(r': ([A-Za-z_][A-Za-z0-9_ ()]*)', r': "\1"', raw_str)
+
+        # 3. Replace empty values with null
+        raw_str = re.sub(r':\s*,', ': null,', raw_str)
+
+        # 4. Fix UUID by removing stray quotes around the first part
+        raw_str = re.sub(r'"([0-9a-f]{8})"-([0-9a-f-]+)', r'"\1-\2"', raw_str)
+
+        # 5. Fix date format by quoting
+        raw_str = re.sub(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)', r'"\1"', raw_str)
+        visa_data = json.loads(raw_str)
+        print("visa_data=========")
+        print(visa_data)
     except json.JSONDecodeError:
         return {"error": "Invalid JSON in visa_profile"}
 
