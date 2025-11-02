@@ -65,8 +65,6 @@ const REPORT_STORAGE_KEY = "voyage_latest_report";
 let reportRedirectTimer = null;
 let reportCompleteHandled = false;
 
-
-
 // ===== Dynamic configuration from query params =====
 const urlParams = new URLSearchParams(window.location.search);
 
@@ -81,8 +79,8 @@ try {
   VISA_PROFILE_Q = VISA_PROFILE;
 }
 const CHARACTER_Q = urlParams.get("character") || DEFAULT_CHARACTER;
+const GIF_LINK_Q = urlParams.get("gif_link") || 'https://novawebbusiness.com/wp-content/uploads/2022/12/Wow-gif.gif';
 
-// Override config functions dynamically
 function getDynamicAthenaBase() {
   return BEND_URL?.trim().replace(/\/$/, "");
 }
@@ -90,7 +88,6 @@ function getDynamicAthenaBase() {
 const ACTIVE_CHARACTER = CHARACTER_Q;
 const ACTIVE_VISA_PROFILE = VISA_PROFILE_Q;
 
-// (Optional) Auto-fill UI field for backend URL if present
 const apiAthenaInput = document.getElementById("apiAthena");
 if (apiAthenaInput && BEND_URL) {
   apiAthenaInput.value = BEND_URL;
@@ -100,12 +97,11 @@ console.log("[Config] Loaded from query:", {
   bend_url: BEND_URL,
   fend_url: FEND_URL,
   visa_profile: ACTIVE_VISA_PROFILE,
-  character: ACTIVE_CHARACTER
+  character: ACTIVE_CHARACTER,
+  gif_link: GIF_LINK_Q
 });
 
-
 // ===== utils =====
-
 function extractTokenFromUrl(url) {
   try {
     const u = new URL(url, location.origin);
@@ -129,7 +125,6 @@ function setPill(text, cls = "warn") {
 }
 
 function setStateBadge(state) {
-  // Only 3 states for FE
   const normalized = (state || "unknown").toLowerCase();
   const variant = ["listening", "thinking", "speaking"].includes(normalized) ? normalized : "unknown";
   const clsMap = { listening: "ok", thinking: "warn", speaking: "info", unknown: "warn" };
@@ -142,9 +137,19 @@ function applyStateUpdate(state) {
   setStateBadge(state);
 
   const s = state.toLowerCase();
-  if (s === "thinking") { setVideoStatus("Athena is thinking…", false); characterReplyText.textContent = "Thinking..."; }
-  else if (s === "speaking") { setVideoStatus("Playing…", false); }
-  else if (s === "listening") { setVideoStatus("Listening…", false); characterReplyText.textContent = "Listening"; }
+  if (s === "thinking") { 
+    setVideoStatus("Athena is thinking…", false); 
+    replyTextEl.textContent = "Thinking..."; 
+    showVideoLoadingGif(); 
+  }
+  else if (s === "speaking") { 
+    setVideoStatus("Playing…", false); 
+  }
+  else if (s === "listening") { 
+    setVideoStatus("Listening…", false); 
+    replyTextEl.textContent = "Listening"; 
+    showVideoLoadingGif(); 
+  }
 }
 
 function setTurnBadge(text) {
@@ -229,7 +234,6 @@ function isNgrokUrl(url) {
 async function fetchVideoAsBlob(url) {
   const headers = {};
   if (isNgrokUrl(url)) {
-    // required to skip the ngrok browser warning wall
     headers["ngrok-skip-browser-warning"] = "true";
   }
   const res = await fetch(url, { headers, mode: "cors", cache: "no-store" });
@@ -267,6 +271,48 @@ async function probeMedia(url) {
   }
 }
 
+// ===== Video Loading GIF Helpers =====
+function createVideoLoadingOverlay() {
+  let loadingOverlay = document.querySelector('.video-loading-overlay');
+  if (loadingOverlay) return loadingOverlay;
+
+  loadingOverlay = document.createElement('div');
+  loadingOverlay.className = 'video-loading-overlay';
+  
+  const gifImg = document.createElement('img');
+  gifImg.className = 'video-loading-gif';
+  gifImg.src = GIF_LINK_Q;
+  gifImg.alt = 'Loading...';
+  
+  loadingOverlay.appendChild(gifImg);
+  
+  const videoShell = document.querySelector('.video-shell');
+  if (videoShell) {
+    videoShell.appendChild(loadingOverlay);
+  }
+  
+  return loadingOverlay;
+}
+
+function showVideoLoadingGif() {
+  const overlay = createVideoLoadingOverlay();
+  overlay.classList.remove('hidden');
+  log('[loading] Showing GIF');
+}
+
+function hideVideoLoadingGif() {
+  const overlay = document.querySelector('.video-loading-overlay');
+  if (overlay) {
+    overlay.classList.add('hidden');
+    log('[loading] Hiding GIF - video ready');
+  }
+}
+
+function ensureGifVisible() {
+  const overlay = createVideoLoadingOverlay();
+  overlay.classList.remove('hidden');
+}
+
 // ===== overlay media controls =====
 function clearOverlay() {
   if (!overlayVideo) return;
@@ -285,6 +331,8 @@ function clearOverlay() {
   overlayVideo.removeAttribute("src");
   overlayVideo.load();
   overlayVideo.classList.remove("active");
+  
+  showVideoLoadingGif();
 }
 
 function scheduleOverlayTeardown(durationMs) {
@@ -309,12 +357,12 @@ async function playOverlayClip(payload) {
   }
 
   overlayClipId = payload?.clip_id || null;
-  // capture token from payload (prefer top-level, then extras), fallback parse from URL
   const tokenFromPayload = payload?.media_token || payload?.extras?.media_token || null;
   overlayMediaToken = tokenFromPayload || extractTokenFromUrl(url);
   if (overlayMediaToken) overlayVideo.dataset.mediaToken = overlayMediaToken;
 
-  // diag
+  ensureGifVisible();
+
   {
     const pageIsHttps = window.isSecureContext || location.protocol === "https:";
     log(`[diag] page.origin=${location.origin} secure=${window.isSecureContext} pageIsHttps=${pageIsHttps}`);
@@ -336,33 +384,29 @@ async function playOverlayClip(payload) {
   overlayVideo.classList.add("active");
 
   try {
-    // ngrok bypass: fetch with header -> blob URL -> feed video
     const blob = await fetchVideoAsBlob(url);
     const objectUrl = URL.createObjectURL(blob);
     overlayVideo.src = objectUrl;
     overlayVideo.dataset.objectUrl = objectUrl;
   } catch (e) {
     log(`[media] ngrok fetch bypass failed: ${e.message}`, "warn");
-    // Fallback: direct src still works on local or non-ngrok hosts
     overlayVideo.src = url;
   }
 
   overlayVideo.currentTime = 0;
 
   const promise = overlayVideo.play();
-  // const duration = Number(payload?.duration);
-  // if (!Number.isNaN(duration) && duration > 0) {
-  //   scheduleOverlayTeardown(Math.round(duration * 1000) + 250);
-  // } else {
-  //   scheduleOverlayTeardown(0);
-  // }
 
   if (promise && typeof promise.then === "function") {
     promise
-      .then(() => setVideoStatus("", false))
+      .then(() => {
+        setVideoStatus("", false);
+        hideVideoLoadingGif();
+      })
       .catch((err) => {
         log(`Overlay playback blocked: ${err?.message || err}`, "warn");
         setVideoStatus("Tap to play response", true);
+        ensureGifVisible();
       });
   }
 }
@@ -371,6 +415,7 @@ function stopOverlayClip(payload) {
   const clipId = payload?.clip_id;
   if (clipId && overlayClipId && clipId !== overlayClipId) return;
   clearOverlay();
+  showVideoLoadingGif();
 }
 
 function handleMedia(data) {
@@ -393,6 +438,8 @@ function clearMedia() {
 
   remoteStream = null;
   setVideoStatus("Waiting for connection…", true);
+  
+  ensureGifVisible();
 }
 
 // ===== connect UI =====
@@ -418,12 +465,13 @@ function setUIConnected(connected) {
     replyTextEl.textContent = "Waiting for Athena…";
     resetReportUI();
     clearMedia();
+    showVideoLoadingGif();
   } else {
     try { sessionStorage.removeItem(REPORT_STORAGE_KEY); } catch { }
     resetReportUI();
     reportCompleteHandled = false;
     setVideoStatus("Ready. Start speaking or wait for Athena…", true);
-    // startCamera();
+    showVideoLoadingGif();
     micOn();
   }
 }
@@ -469,11 +517,35 @@ function wireVideoDiagnostics(el, label) {
   }
 }
 
-// status overlay
 wireVideoDiagnostics(avatarVideo, "avatar");
 wireVideoDiagnostics(overlayVideo, "overlay");
 
+// ===== Video Event Listeners for Loading GIF =====
 if (overlayVideo) {
+  overlayVideo.addEventListener('loadstart', () => {
+    ensureGifVisible();
+    log('[video:overlay] loadstart - ensuring GIF visible');
+  });
+  
+  overlayVideo.addEventListener('canplay', () => {
+    log('[video:overlay] canplay - video ready but keeping GIF until playing');
+  });
+  
+  overlayVideo.addEventListener('playing', () => {
+    hideVideoLoadingGif();
+    log('[video:overlay] playing - hiding GIF');
+  });
+  
+  overlayVideo.addEventListener('waiting', () => {
+    showVideoLoadingGif();
+    log('[video:overlay] waiting (buffering) - showing GIF');
+  });
+  
+  overlayVideo.addEventListener('pause', () => {
+    showVideoLoadingGif();
+    log('[video:overlay] paused - showing GIF');
+  });
+
   overlayVideo.addEventListener("ended", () => {
     const token = overlayVideo.dataset.mediaToken || overlayMediaToken;
     if (token) {
@@ -482,18 +554,58 @@ if (overlayVideo) {
     } else {
       log("[media] ended but no token to report", "warn");
     }
-    // UI cleanup after notifying backend
+    
+    showVideoLoadingGif();
+    
     if (overlayClipId) stopOverlayClip({ clip_id: overlayClipId });
     else clearOverlay();
   });
+
   overlayVideo.addEventListener("error", () => {
     log("Overlay playback error", "err");
+    showVideoLoadingGif();
     clearOverlay();
     setVideoStatus("Media playback error", true);
   });
 }
 
-// ===== connect flow (addTrack + ontrack) =====espo
+if (avatarVideo) {
+  avatarVideo.addEventListener('loadstart', () => {
+    ensureGifVisible();
+    log('[video:avatar] loadstart - ensuring GIF visible');
+  });
+  
+  avatarVideo.addEventListener('canplay', () => {
+    log('[video:avatar] canplay - video ready but keeping GIF until playing');
+  });
+  
+  avatarVideo.addEventListener('playing', () => {
+    hideVideoLoadingGif();
+    log('[video:avatar] playing - hiding GIF');
+  });
+  
+  avatarVideo.addEventListener('waiting', () => {
+    showVideoLoadingGif();
+    log('[video:avatar] waiting (buffering) - showing GIF');
+  });
+  
+  avatarVideo.addEventListener('pause', () => {
+    showVideoLoadingGif();
+    log('[video:avatar] paused - showing GIF');
+  });
+  
+  avatarVideo.addEventListener('ended', () => {
+    showVideoLoadingGif();
+    log('[video:avatar] ended - showing GIF');
+  });
+  
+  avatarVideo.addEventListener('error', () => {
+    showVideoLoadingGif();
+    log('[video:avatar] error - showing GIF');
+  });
+}
+
+// ===== connect flow (addTrack + ontrack) =====
 async function connect() {
   try {
     overlay.style.display = 'flex';
@@ -525,18 +637,17 @@ async function connect() {
       onError: (msg) => log(`Server error: ${msg}`, "err"),
     });
 
-    // === Local media: AUDIO + VIDEO ===
+    // Local media: AUDIO + VIDEO
     localStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       video: { width: 640, height: 360, frameRate: 30 },
     });
 
-
     // Attach local stream to video element for preview
     const localRender = document.getElementById("localRender");
     if (localRender) {
       localRender.srcObject = localStream;
-      localRender.muted = true; // mute self to avoid echo
+      localRender.muted = true;
       localRender.play().catch(() => console.warn("Local video autoplay blocked"));
     }
 
@@ -559,17 +670,25 @@ async function connect() {
 
     // Remote media from server
     remoteStream = new MediaStream();
-    avatarVideo.srcObject = remoteStream;  // show incoming video
+    avatarVideo.srcObject = remoteStream;
     avatarVideo.muted = true;
 
     pc.ontrack = (ev) => {
       remoteStream.addTrack(ev.track);
       log(`[ontrack] ${ev.track.kind}`);
       if (ev.track.kind === "video") {
+        ensureGifVisible();
+        
         const p = avatarVideo.play();
         if (p && typeof p.then === "function") {
-          p.then(() => setVideoStatus("", false))
-            .catch(() => setVideoStatus("Tap to play video", true));
+          p.then(() => {
+            setVideoStatus("", false);
+            hideVideoLoadingGif();
+          })
+          .catch(() => {
+            setVideoStatus("Tap to play video", true);
+            ensureGifVisible();
+          });
         }
       }
     };
@@ -579,7 +698,6 @@ async function connect() {
     await pc.setLocalDescription(offer);
     await waitForIceGatheringComplete(pc);
 
-    // ensure we send a stable client id (per tab) to the backend
     clientId = clientId || getClientId();
 
     const res = await fetch(`${getDynamicAthenaBase()}/api/offer`, {
@@ -635,7 +753,8 @@ async function micOn() {
       });
     } else if (!localStream.getAudioTracks().length) {
       const audioOnly = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
+        video: false
       });
       localStream.addTrack(audioOnly.getAudioTracks()[0]);
     }
@@ -651,6 +770,7 @@ async function micOn() {
     btnMicOn.style.display = 'none';
     btnMicOff.style.display = 'flex';
     setTurnBadge("—");
+    showVideoLoadingGif();
     log("Mic ON → sending audio, notified server.");
   } catch (err) {
     console.error(err);
@@ -663,7 +783,6 @@ async function micOff() {
     if (!pc) return;
     dcClient?.send("mic:off");
 
-    // Stop only the audio track(s); keep camera ON
     if (localStream) {
       for (const t of localStream.getAudioTracks()) t.stop();
       localStream.getAudioTracks().forEach(t => localStream.removeTrack(t));
@@ -672,6 +791,7 @@ async function micOff() {
       await audioSender.replaceTrack(null);
     }
 
+    showVideoLoadingGif();
     log("Mic OFF → stopped local audio, told server to finalize WAV. (Video stays on.)");
     btnMicOn.style.display = 'flex';
     btnMicOff.style.display = 'none';
@@ -681,7 +801,7 @@ async function micOff() {
   }
 }
 
-async function bye() {
+async function bye(disconnect=true) {
   try { dcClient?.send("bye"); } catch { }
   try {
     if (localStream) {
@@ -693,11 +813,12 @@ async function bye() {
     await pc?.close();
   } catch { }
   pc = null; dc = null; dcClient = null;
-  // keep clientId (stable per tab) so reconnects reuse it
   sessionId = null;
   clearMedia();
   setUIConnected(false);
-  window.location.href = "https://nexsewa.com.np";
+  if(disconnect){
+    window.location.href = "./bye.html";
+  }
   log("Closed connection.");
 }
 
@@ -770,7 +891,7 @@ function handleReportComplete(data) {
   log("[report] complete");
 
   console.log(data);
-  if (reportCompleteHandled) return; // already handled once
+  if (reportCompleteHandled) return;
   reportCompleteHandled = true;
 
   const finalPayload = data || {};
@@ -801,7 +922,7 @@ function handleReportComplete(data) {
   };
 
   try {
-    const result = bye();
+    const result = bye(false);
     if (result && typeof result.then === "function") {
       result.catch(() => { }).finally(finalizeRedirect);
       return;
@@ -823,29 +944,9 @@ window.addEventListener("beforeunload", () => {
   try { dcClient?.send("bye"); } catch { }
 });
 
-
-//
-// const startButton = document.getElementById("startButton");
-// const localVideo = document.getElementById("localVideo");
-
-// startButton.addEventListener("click", async () => {
-//   startCamera();
-// });
-
-
-// async function startCamera() {
-//   try {
-//     const stream = await navigator.mediaDevices.getUserMedia({
-//       video: true,
-//       audio: false // set to true if you want mic too
-
-//     });
-//     localVideo.srcObject = stream;
-//   } catch (err) {
-//     console.error("Error accessing media devices.", err);
-//     alert("Camera access denied or not available.");
-//   }
-// }
-
+// Auto-connect on page load
+window.addEventListener('DOMContentLoaded', () => {
+  ensureGifVisible();
+});
 
 connect();

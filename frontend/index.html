@@ -111,7 +111,6 @@
       </div>
       <div class="video-shell">
         <video id="avatarVideo" autoplay playsinline muted></video>
-        <!-- crossorigin is fine for blob: URLs and keeps CORS happy if needed -->
         <video id="overlayVideo" class="overlay-video" playsinline crossorigin="anonymous"></video>
         <div class="video-status" id="videoStatus">Waiting for connection…</div>
       </div>
@@ -147,18 +146,13 @@
       </div>
 
        <div class="tips-text">
-        Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+        Lorem Ipsum is simply dummy text of the printing and typesetting industry.
       </div>
 
       <div class="report-progress-bar" aria-hidden="true">
         <div id="reportProgressFill" class="report-progress-fill" style="width: 0%;"></div>
       </div>
       <div class="report-progress-info" id="reportProgressInfo">Awaiting report generation…</div>
-      <!-- <div class="report-result is-hidden" id="reportResult">
-        <div class="report-summary" id="reportSummary"></div>
-        <div class="report-sections" id="reportSections"></div>
-        <div class="report-recordings" id="reportRecordings"></div>
-      </div> -->
     </div>
 
 
