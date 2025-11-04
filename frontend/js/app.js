@@ -2,12 +2,12 @@ import { RTC_CONFIG, getAthenaBase, DEFAULT_CHARACTER, VISA_PROFILE, getClientId
 import { DC } from "./dc.js";
 
 /** Debug toggles */
-const DEBUG_MEDIA_PROBE = false;    // logs headers before playing overlay media
-const DEBUG_VIDEO_EVENTS = false;   // verbose <video> event logging
+const DEBUG_MEDIA_PROBE = false;
+const DEBUG_VIDEO_EVENTS = false;
 
 // ===== DOM refs =====
 const statusEl = document.getElementById("status");
-const overlay = document.getElementById('loadingOverlay')
+const overlay = document.getElementById('loadingOverlay');
 const logEl = document.getElementById("log");
 const pill = document.getElementById("statePill");
 const stateBadge = document.getElementById("stateBadge");
@@ -16,8 +16,8 @@ const turnBadge = document.getElementById("turnBadge");
 const transcriptFinalEl = document.getElementById("final_text");
 const transcriptInterimEl = document.getElementById("interim_text");
 
-const avatarVideo = document.getElementById("avatarVideo");  // remote idle video
-const overlayVideo = document.getElementById("overlayVideo");  // overlay clip video
+const avatarVideo = document.getElementById("avatarVideo");
+const overlayVideo = document.getElementById("overlayVideo");
 const videoStatus = document.getElementById("videoStatus");
 const replyTextEl = document.getElementById("characterReplyText");
 
@@ -36,6 +36,23 @@ const btnConnect = document.getElementById("btnConnect");
 const btnMicOn = document.getElementById("btnMicOn");
 const btnMicOff = document.getElementById("btnMicOff");
 const btnBye = document.getElementById("btnBye");
+const sessionTimerEl = document.getElementById("sessionTimer");
+
+// ===== Audio visualization state =====
+const canvas = document.getElementById('visualizer');
+const ctx = canvas.getContext('2d');
+const sensitivitySlider = document.getElementById('sensitivity');
+const sensValue = document.getElementById('sensValue');
+
+let audioCtx;
+let analyser = null;
+let dataArray = null;
+let sensitivity = 1.0;
+let currentState = "unknown";
+
+// ===== Session timer state =====
+let sessionStartTime = null;
+let timerInterval = null;
 
 // ===== WebRTC state =====
 let pc = null;
@@ -68,8 +85,8 @@ let reportCompleteHandled = false;
 // ===== Dynamic configuration from query params =====
 const urlParams = new URLSearchParams(window.location.search);
 
-const BEND_URL = urlParams.get("bend_url") || getAthenaBase();   // backend (Athena API)
-const FEND_URL = urlParams.get("fend_url") || window.location.origin; // frontend base
+const BEND_URL = urlParams.get("bend_url") || getAthenaBase();
+const FEND_URL = urlParams.get("fend_url") || window.location.origin;
 let VISA_PROFILE_Q;
 try {
   const visaParam = urlParams.get("visa_profile");
@@ -100,6 +117,194 @@ console.log("[Config] Loaded from query:", {
   character: ACTIVE_CHARACTER,
   gif_link: GIF_LINK_Q
 });
+
+// ===== Audio Visualization Functions =====
+if (sensitivitySlider) {
+  sensitivitySlider.addEventListener('input', () => {
+    sensitivity = parseFloat(sensitivitySlider.value);
+    if (sensValue) sensValue.textContent = sensitivity.toFixed(1);
+  });
+}
+
+let currentAudioSource = null;
+async function setupAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+
+  if (!analyser) {
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    dataArray = new Uint8Array(analyser.frequencyBinCount);
+  }
+
+  // Connect to localStream if available
+  if (localStream) {
+    try {
+      const source = audioCtx.createMediaStreamSource(localStream);
+      source.connect(analyser);
+      log("[audio viz] Connected to RTC localStream");
+      draw();
+    } catch (err) {
+      log(`[audio viz] Failed to connect to localStream: ${err.message}`, "warn");
+    }
+  }
+}
+
+let lastBeat = 0;
+function detectBeat() {
+  const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+  const energy = avg / 128.0;
+  const now = Date.now();
+  if (energy > 1.2 * sensitivity && now - lastBeat > 300) {
+    lastBeat = now;
+    return true;
+  }
+  return false;
+}
+
+function draw() {
+  requestAnimationFrame(draw);
+  if (!analyser || !dataArray) return;
+
+  analyser.getByteTimeDomainData(dataArray);
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const bufferLength = dataArray.length;
+  const centerY = canvas.height / 2;
+
+  const isBeat = detectBeat();
+
+  const lineConfigs = [
+    { color: '#1db954', freq: 0.5, amp: 1.0 },
+    { color: '#00d9ff', freq: 1.0, amp: 0.8 },
+    { color: '#ff0044', freq: 1.5, amp: 0.6 }
+  ];
+
+  lineConfigs.forEach(cfg => {
+    ctx.lineWidth = 0.25;
+    ctx.strokeStyle = cfg.color;
+    ctx.beginPath();
+    const sliceWidth = canvas.width / bufferLength;
+    let x = 0;
+
+    for (let i = 0; i < bufferLength; i++) {
+      const v = dataArray[i] / 128.0;
+      const beatBoost = isBeat ? 1.5 : 1.0;
+      const y = centerY + (v - 1) * 40 * cfg.amp * sensitivity * beatBoost * Math.sin(i * 0.01 * cfg.freq);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+      x += sliceWidth;
+    }
+    ctx.stroke();
+  });
+
+  if (isBeat) {
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
+function createThreeDotAnimation() {
+  const container = document.createElement('center');
+  container.id = 'threeDotsLoader';
+  container.style.cssText = `
+    position: fixed;
+    bottom: 85px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1001;
+    display: none;
+  `;
+
+  const style = document.createElement('style');
+  style.textContent = `
+    #threeDotsLoader {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #ffffff;
+      opacity: 0.6;
+      box-shadow: 0 2px 8px rgba(255, 255, 255, 0.3);
+      transform: scale(0.85);
+      transition: 
+        background 0.45s ease,
+        transform 0.45s ease,
+        opacity 0.45s ease,
+        box-shadow 0.45s ease;
+    }
+
+    .dot.active {
+     background: #ffffff;
+      
+      background-blend-mode: overlay;
+      box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+      transform: scale(1.2);
+      opacity: 1;
+    }
+
+    @keyframes bounceSync {
+      0%, 80%, 100% {
+        transform: scale(0.85);
+        opacity: 0.6;
+      }
+      40% {
+        transform: scale(1.2);
+        opacity: 1;
+      }
+    }
+  `;
+
+  document.head.appendChild(style);
+
+  container.innerHTML = `
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+  `;
+  document.body.appendChild(container);
+
+  const dots = container.querySelectorAll('.dot');
+  let activeIndex = 0;
+
+  function updateDots() {
+    dots.forEach((dot, i) => {
+      if (i === activeIndex) {
+        dot.classList.add('active');
+      } else {
+        dot.classList.remove('active');
+      }
+    });
+    activeIndex = (activeIndex + 1) % dots.length;
+  }
+
+  setInterval(updateDots, 450);
+
+  return container;
+}
+
+let threeDotsLoader = null;
+
+function showThreeDots() {
+  if (!threeDotsLoader) {
+    threeDotsLoader = createThreeDotAnimation();
+  }
+  threeDotsLoader.style.display = 'flex';
+}
+
+function hideThreeDots() {
+  if (threeDotsLoader) {
+    threeDotsLoader.style.display = 'none';
+  }
+}
 
 // ===== utils =====
 function extractTokenFromUrl(url) {
@@ -137,18 +342,31 @@ function applyStateUpdate(state) {
   setStateBadge(state);
 
   const s = state.toLowerCase();
-  if (s === "thinking") { 
-    setVideoStatus("Athena is thinking…", false); 
-    replyTextEl.textContent = "Thinking..."; 
-    showVideoLoadingGif(); 
+  currentState = s;
+
+  if (s === "thinking") {
+    setVideoStatus("", false);
+    replyTextEl.textContent = "Thinking";
+    showVideoLoadingGif();
+    showThreeDots();
+    canvas.style.display = 'none';
+
   }
-  else if (s === "speaking") { 
-    setVideoStatus("Playing…", false); 
+  else if (s === "speaking") {
+    setVideoStatus("", false);
+    replyTextEl.textContent = "Speaking";
+    hideThreeDots();
+    sensitivity = 0.0;
+    canvas.style.display = 'flex';
+
   }
-  else if (s === "listening") { 
-    setVideoStatus("Listening…", false); 
-    replyTextEl.textContent = "Listening"; 
-    showVideoLoadingGif(); 
+  else if (s === "listening") {
+    setVideoStatus("", false);
+    replyTextEl.textContent = "Listening";
+    hideThreeDots();
+    //here here
+    sensitivity = 2.0;
+    canvas.style.display = 'flex';
   }
 }
 
@@ -177,6 +395,34 @@ function clamp(value, min, max) {
   const num = Number(value);
   if (Number.isNaN(num)) return min;
   return Math.min(Math.max(num, min), max);
+}
+
+function startSessionTimer() {
+  if (timerInterval) return;
+  sessionStartTime = Date.now();
+  if (sessionTimerEl) sessionTimerEl.style.display = 'flex';
+
+  timerInterval = setInterval(() => {
+    if (!sessionStartTime) return;
+    const elapsed = Math.floor((Date.now() - sessionStartTime) / 1000);
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = elapsed % 60;
+    if (sessionTimerEl) {
+      sessionTimerEl.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+  }, 1000);
+}
+
+function stopSessionTimer() {
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+  sessionStartTime = null;
+  if (sessionTimerEl) {
+    sessionTimerEl.style.display = 'none';
+    sessionTimerEl.textContent = '00:00';
+  }
 }
 
 function resetReportUI({ keepStatus = false } = {}) {
@@ -223,7 +469,6 @@ function updateReportProgress(progress, info = "") {
   }
 }
 
-/** tiny helpers for ngrok interstitial bypass */
 function isNgrokUrl(url) {
   try {
     const u = new URL(url);
@@ -271,26 +516,25 @@ async function probeMedia(url) {
   }
 }
 
-// ===== Video Loading GIF Helpers =====
 function createVideoLoadingOverlay() {
   let loadingOverlay = document.querySelector('.video-loading-overlay');
   if (loadingOverlay) return loadingOverlay;
 
   loadingOverlay = document.createElement('div');
   loadingOverlay.className = 'video-loading-overlay';
-  
+
   const gifImg = document.createElement('img');
   gifImg.className = 'video-loading-gif';
   gifImg.src = GIF_LINK_Q;
   gifImg.alt = 'Loading...';
-  
+
   loadingOverlay.appendChild(gifImg);
-  
+
   const videoShell = document.querySelector('.video-shell');
   if (videoShell) {
     videoShell.appendChild(loadingOverlay);
   }
-  
+
   return loadingOverlay;
 }
 
@@ -313,7 +557,6 @@ function ensureGifVisible() {
   overlay.classList.remove('hidden');
 }
 
-// ===== overlay media controls =====
 function clearOverlay() {
   if (!overlayVideo) return;
   overlayClipId = null;
@@ -331,7 +574,7 @@ function clearOverlay() {
   overlayVideo.removeAttribute("src");
   overlayVideo.load();
   overlayVideo.classList.remove("active");
-  
+
   showVideoLoadingGif();
 }
 
@@ -415,7 +658,6 @@ function stopOverlayClip(payload) {
   const clipId = payload?.clip_id;
   if (clipId && overlayClipId && clipId !== overlayClipId) return;
   clearOverlay();
-  showVideoLoadingGif();
 }
 
 function handleMedia(data) {
@@ -438,11 +680,10 @@ function clearMedia() {
 
   remoteStream = null;
   setVideoStatus("Waiting for connection…", true);
-  
+
   ensureGifVisible();
 }
 
-// ===== connect UI =====
 function setUIConnected(connected) {
   btnConnect.disabled = connected;
   btnMicOn.disabled = !connected;
@@ -463,6 +704,8 @@ function setUIConnected(connected) {
     setStateBadge("unknown");
     setTurnBadge("—");
     replyTextEl.textContent = "Waiting for Athena…";
+    hideThreeDots();
+    showThreeDots();
     resetReportUI();
     clearMedia();
     showVideoLoadingGif();
@@ -489,15 +732,16 @@ function waitForIceGatheringComplete(pc) {
   });
 }
 
-// ===== verbose <video> diagnostics (optional) =====
 function rs(v) {
   const map = ["HAVE_NOTHING", "HAVE_METADATA", "HAVE_CURRENT_DATA", "HAVE_FUTURE_DATA", "HAVE_ENOUGH_DATA"];
   return map[v?.readyState ?? 0] || `HAVE_${v?.readyState}`;
 }
+
 function ns(v) {
   const map = ["NETWORK_EMPTY", "NETWORK_IDLE", "NETWORK_LOADING", "NETWORK_NO_SOURCE"];
   return map[v?.networkState ?? 0] || `NETWORK_${v?.networkState}`;
 }
+
 function wireVideoDiagnostics(el, label) {
   if (!DEBUG_VIDEO_EVENTS || !el) return;
   const events = [
@@ -520,27 +764,26 @@ function wireVideoDiagnostics(el, label) {
 wireVideoDiagnostics(avatarVideo, "avatar");
 wireVideoDiagnostics(overlayVideo, "overlay");
 
-// ===== Video Event Listeners for Loading GIF =====
 if (overlayVideo) {
   overlayVideo.addEventListener('loadstart', () => {
     ensureGifVisible();
     log('[video:overlay] loadstart - ensuring GIF visible');
   });
-  
+
   overlayVideo.addEventListener('canplay', () => {
     log('[video:overlay] canplay - video ready but keeping GIF until playing');
   });
-  
+
   overlayVideo.addEventListener('playing', () => {
     hideVideoLoadingGif();
     log('[video:overlay] playing - hiding GIF');
   });
-  
+
   overlayVideo.addEventListener('waiting', () => {
     showVideoLoadingGif();
     log('[video:overlay] waiting (buffering) - showing GIF');
   });
-  
+
   overlayVideo.addEventListener('pause', () => {
     showVideoLoadingGif();
     log('[video:overlay] paused - showing GIF');
@@ -554,9 +797,9 @@ if (overlayVideo) {
     } else {
       log("[media] ended but no token to report", "warn");
     }
-    
+
     showVideoLoadingGif();
-    
+
     if (overlayClipId) stopOverlayClip({ clip_id: overlayClipId });
     else clearOverlay();
   });
@@ -574,42 +817,42 @@ if (avatarVideo) {
     ensureGifVisible();
     log('[video:avatar] loadstart - ensuring GIF visible');
   });
-  
+
   avatarVideo.addEventListener('canplay', () => {
     log('[video:avatar] canplay - video ready but keeping GIF until playing');
   });
-  
+
   avatarVideo.addEventListener('playing', () => {
     hideVideoLoadingGif();
     log('[video:avatar] playing - hiding GIF');
   });
-  
+
   avatarVideo.addEventListener('waiting', () => {
     showVideoLoadingGif();
     log('[video:avatar] waiting (buffering) - showing GIF');
   });
-  
+
   avatarVideo.addEventListener('pause', () => {
     showVideoLoadingGif();
     log('[video:avatar] paused - showing GIF');
   });
-  
+
   avatarVideo.addEventListener('ended', () => {
     showVideoLoadingGif();
     log('[video:avatar] ended - showing GIF');
   });
-  
+
   avatarVideo.addEventListener('error', () => {
     showVideoLoadingGif();
     log('[video:avatar] error - showing GIF');
   });
 }
 
-// ===== connect flow (addTrack + ontrack) =====
 async function connect() {
   try {
     overlay.style.display = 'flex';
-    statusEl.textContent = "Connecting…";
+    statusEl.textContent = "Connecting";
+    showThreeDots();
     log("Creating RTCPeerConnection…");
 
     pc = new RTCPeerConnection(RTC_CONFIG);
@@ -622,14 +865,13 @@ async function connect() {
       }
     };
 
-    // DataChannel
     dc = pc.createDataChannel("control");
     dcClient = new DC(dc, {
       onOpen: () => log("DataChannel open"),
       onClose: () => log("DataChannel closed"),
       onState: (s) => applyStateUpdate(s),
       onSTT: (kind, idx, text) => handleStt(kind, idx, text),
-      onLLM: (t) => { replyTextEl.textContent = t; },
+      onLLM: (t) => { replyTextEl.textContent = 'Speaking'; },
       onLog: (data) => handleLog(data),
       onMedia: (payload) => handleMedia(payload),
       onReportProgress: (payload) => handleReportProgress(payload),
@@ -637,13 +879,14 @@ async function connect() {
       onError: (msg) => log(`Server error: ${msg}`, "err"),
     });
 
-    // Local media: AUDIO + VIDEO
     localStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       video: { width: 640, height: 360, frameRate: 30 },
     });
 
-    // Attach local stream to video element for preview
+    // Setup audio visualization with localStream
+    setupAudio();
+
     const localRender = document.getElementById("localRender");
     if (localRender) {
       localRender.srcObject = localStream;
@@ -668,7 +911,6 @@ async function connect() {
       log("[local] no video track found", "warn");
     }
 
-    // Remote media from server
     remoteStream = new MediaStream();
     avatarVideo.srcObject = remoteStream;
     avatarVideo.muted = true;
@@ -678,22 +920,21 @@ async function connect() {
       log(`[ontrack] ${ev.track.kind}`);
       if (ev.track.kind === "video") {
         ensureGifVisible();
-        
+
         const p = avatarVideo.play();
         if (p && typeof p.then === "function") {
           p.then(() => {
             setVideoStatus("", false);
             hideVideoLoadingGif();
           })
-          .catch(() => {
-            setVideoStatus("Tap to play video", true);
-            ensureGifVisible();
-          });
+            .catch(() => {
+              setVideoStatus("Tap to play video", true);
+              ensureGifVisible();
+            });
         }
       }
     };
 
-    // SDP handshake
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     await waitForIceGatheringComplete(pc);
@@ -732,6 +973,9 @@ async function connect() {
     setUIConnected(true);
     log(`Handshake complete. client_id=${clientId || "(n/a)"} session_id=${sessionId || "(n/a)"}`);
     log("You may toggle mic.");
+    startSessionTimer();
+    await new Promise(resolve => setTimeout(resolve, 2000)); micOff();
+    micOn();
   } catch (err) {
     console.error(err);
     log("ERROR: " + (err?.message || err), "err");
@@ -740,23 +984,25 @@ async function connect() {
   }
 }
 
-// ===== mic controls (toggle only AUDIO) =====
 async function micOn() {
   try {
     if (!pc) return;
 
-    // Ensure we have a live audio track
     if (!localStream || !localStream.getVideoTracks().length) {
       localStream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: { width: 640, height: 360, frameRate: 30 },
       });
+      // Setup audio visualization when getting new stream
+      setupAudio();
     } else if (!localStream.getAudioTracks().length) {
       const audioOnly = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: false
       });
       localStream.addTrack(audioOnly.getAudioTracks()[0]);
+      // Setup audio visualization when adding audio track
+      setupAudio();
     }
 
     const track = localStream.getAudioTracks()[0];
@@ -801,7 +1047,7 @@ async function micOff() {
   }
 }
 
-async function bye(disconnect=true) {
+async function bye(disconnect = true) {
   try { dcClient?.send("bye"); } catch { }
   try {
     if (localStream) {
@@ -814,15 +1060,16 @@ async function bye(disconnect=true) {
   } catch { }
   pc = null; dc = null; dcClient = null;
   sessionId = null;
+  hideThreeDots();
   clearMedia();
   setUIConnected(false);
-  if(disconnect){
+  stopSessionTimer();
+  if (disconnect) {
     window.location.href = "./bye.html";
   }
   log("Closed connection.");
 }
 
-// ===== STT + logs =====
 function handleStt(kind, idx, text) {
   if (Number.isInteger(idx)) {
     if (idx <= lastSttIdx) return;
@@ -934,7 +1181,6 @@ function handleReportComplete(data) {
   finalizeRedirect();
 }
 
-// ===== wire buttons =====
 btnConnect.addEventListener("click", connect);
 btnMicOn.addEventListener("click", micOn);
 btnMicOff.addEventListener("click", micOff);
@@ -944,7 +1190,6 @@ window.addEventListener("beforeunload", () => {
   try { dcClient?.send("bye"); } catch { }
 });
 
-// Auto-connect on page load
 window.addEventListener('DOMContentLoaded', () => {
   ensureGifVisible();
 });
