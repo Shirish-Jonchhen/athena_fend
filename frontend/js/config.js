@@ -60,7 +60,7 @@ export function getClientId() {
 
 export const DEFAULT_CHARACTER = "lucy"; // or "mark"
 export const VISA_PROFILE = {
-    "id": "19a8f41c-0464-4978-a36c-d57ecf265df8",
+    "id": "f9de79de-6fc4-4a98-8a29-82b431b5b56f",
     "data": {
         "visa_type": "F-1 Visa",
         "personal_info": {
@@ -95,3 +95,8 @@ export const VISA_PROFILE = {
         },
     },
 };
+
+
+
+
+

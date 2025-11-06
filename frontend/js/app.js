@@ -90,7 +90,13 @@ const FEND_URL = urlParams.get("fend_url") || window.location.origin;
 let VISA_PROFILE_Q;
 try {
   const visaParam = urlParams.get("visa_profile");
-  VISA_PROFILE_Q = visaParam ? JSON.parse(visaParam) : VISA_PROFILE;
+  console.log("Invalid visa_profile JSON in VISA params:",visaParam);
+
+const deecodedVisaProfile = atob(visaParam)
+  console.log("Invalid visa_profile DECODED JSON in VISA params:",deecodedVisaProfile);
+
+
+  VISA_PROFILE_Q = visaParam ? JSON.parse(deecodedVisaProfile) : VISA_PROFILE;
 } catch (err) {
   console.warn("Invalid visa_profile JSON in query params:", err);
   VISA_PROFILE_Q = VISA_PROFILE;
@@ -704,6 +710,10 @@ function setUIConnected(connected) {
     setStateBadge("unknown");
     setTurnBadge("—");
     replyTextEl.textContent = "Waiting for Athena…";
+    btnConnect.disabled = false;
+    btnMicOn.disabled = false;
+    btnMicOff.disabled = false;
+    btnBye.disabled = false;
     hideThreeDots();
     showThreeDots();
     resetReportUI();
@@ -940,6 +950,8 @@ async function connect() {
     await waitForIceGatheringComplete(pc);
 
     clientId = clientId || getClientId();
+
+    console.log(ACTIVE_VISA_PROFILE);
 
     const res = await fetch(`${getDynamicAthenaBase()}/api/offer`, {
       method: "POST",

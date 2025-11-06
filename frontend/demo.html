@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3-Line Audio Visualizer with Sensitivity</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0a0a0a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+
+    canvas {
+      border: 2px solid #fff;
+      border-radius: 10px;
+      background: #111;
+    }
+
+    .controls {
+      margin-top: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+
+    input[type=range] {
+      width: 200px;
+    }
+
+    button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 5px;
+      background: #1db954;
+      color: #fff;
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    button:hover {
+      background: #17a34a;
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="visualizer" width="800" height="300"></canvas>
+  <div class="controls">
+    <label for="sensitivity">Beat Sensitivity: <span id="sensValue">1.0</span></label>
+    <input type="range" id="sensitivity" min="0.1" max="100" step="0.1" value="1">
+    <button id="startBtn">Start Listening</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('visualizer');
+    const ctx = canvas.getContext('2d');
+    const startBtn = document.getElementById('startBtn');
+    const sensitivitySlider = document.getElementById('sensitivity');
+    const sensValue = document.getElementById('sensValue');
+
+    let audioCtx, analyser, dataArray;
+    let sensitivity = 1.0;
+
+    sensitivitySlider.addEventListener('input', () => {
+      sensitivity = parseFloat(sensitivitySlider.value);
+      sensValue.textContent = sensitivity.toFixed(1);
+    });
+
+    async function setupAudio() {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const source = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      dataArray = new Uint8Array(analyser.frequencyBinCount);
+      draw();
+    }
+
+    let lastBeat = 0;
+    function detectBeat() {
+      const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+      const energy = avg / 128.0;
+      const now = Date.now();
+      if (energy > 1.2 * 4 && now - lastBeat > 300) {
+        lastBeat = now;
+        return true;
+      }
+      return false;
+    }
+
+    function draw() {
+      requestAnimationFrame(draw);
+      analyser.getByteTimeDomainData(dataArray);
+
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const bufferLength = dataArray.length;
+      const centerY = canvas.height / 2;
+
+      const isBeat = detectBeat();
+
+      const lineConfigs = [
+        { color: '#00b894', freq: 0.6, amp: 1.0 },
+        { color: '#55efc4', freq: 1.0, amp: 0.8 },
+        { color: '#ffeaa7', freq: 1.4, amp: 0.6 },
+      ];
+
+      lineConfigs.forEach(cfg => {
+        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = cfg.color;
+        ctx.beginPath();
+        const sliceWidth = canvas.width / bufferLength;
+        let x = 0;
+
+        for (let i = 0; i < bufferLength; i++) {
+          const v = dataArray[i] / 128.0;
+          const beatBoost = isBeat ? 1.5 : 1.0;
+          const y = centerY + (v - 1) * 40 * cfg.amp * 4 * beatBoost * Math.sin(i * 0.01 * cfg.freq);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+          x += sliceWidth;
+        }
+        ctx.stroke();
+      });
+
+      if (isBeat) {
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+
+    startBtn.addEventListener('click', () => {
+      setupAudio();
+      startBtn.style.display = 'none';
+    });
+  </script>
+</body>
+
+</html>
+
+
+
+
+
