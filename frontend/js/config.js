@@ -31,8 +31,6 @@ export const RTC_CONFIG = {
     ],
 };
 
-
-
 export function getAthenaBase() {
   const el = document.getElementById("apiAthena");
   return (el?.value || "http://127.0.0.1:8000").trim();
@@ -42,6 +40,31 @@ export function getEchoBase() {
   const el = document.getElementById("apiEcho");
   return (el?.value || "http://127.0.0.1:8080").trim();
 }
+
+function getDynamicAthenaBase() {
+  return BEND_URL?.trim().replace(/\/$/, "");
+}
+
+export function getAthenaWebSocketUrl() {
+  const base = getDynamicAthenaBase();
+  
+  // If already ws/wss, use directly
+  if (/^wss?:\/\//i.test(base)) {
+    return base.replace(/\/+$/, '') + '/api/ws';
+  }
+  
+  // Convert http(s) to ws(s)
+  if (/^https?:\/\//i.test(base)) {
+    const wsScheme = base.startsWith('https:') ? 'wss:' : 'ws:';
+    const hostPort = base.replace(/^https?:\/\//i, '');
+    return `${wsScheme}//${hostPort.replace(/\/+$/, '')}/api/ws`;
+  }
+  
+  // Fallback: use current protocol
+  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${wsProtocol}//${location.host}/api/ws`;
+}
+
 
 export function getClientId() {
   const KEY = "voyage_client_id";
@@ -57,6 +80,7 @@ export function getClientId() {
     return `c-${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36)}`;
   }
 }
+
 
 export const DEFAULT_CHARACTER = "lucy"; // or "mark"
 export const VISA_PROFILE = {

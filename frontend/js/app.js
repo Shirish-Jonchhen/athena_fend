@@ -1,4 +1,4 @@
-import { RTC_CONFIG, getAthenaBase, DEFAULT_CHARACTER, VISA_PROFILE, getClientId } from "./config.js";
+import { RTC_CONFIG, getAthenaBase, DEFAULT_CHARACTER, VISA_PROFILE, getClientId, getAthenaWebSocketUrl } from "./config.js";
 import { DC } from "./dc.js";
 
 /** Debug toggles */
@@ -103,10 +103,6 @@ const deecodedVisaProfile = atob(visaParam)
 }
 const CHARACTER_Q = urlParams.get("character") || DEFAULT_CHARACTER;
 const GIF_LINK_Q = urlParams.get("gif_link") || 'https://novawebbusiness.com/wp-content/uploads/2022/12/Wow-gif.gif';
-
-function getDynamicAthenaBase() {
-  return BEND_URL?.trim().replace(/\/$/, "");
-}
 
 const ACTIVE_CHARACTER = CHARACTER_Q;
 const ACTIVE_VISA_PROFILE = VISA_PROFILE_Q;
@@ -953,7 +949,9 @@ async function connect() {
 
     console.log(ACTIVE_VISA_PROFILE);
 
-    const res = await fetch(`${getDynamicAthenaBase()}/api/offer`, {
+    const wsUrl = getAthenaWebSocketUrl();
+
+    const res = await fetch("", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
