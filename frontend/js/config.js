@@ -41,23 +41,37 @@ export function getEchoBase() {
   return (el?.value || "http://127.0.0.1:8080").trim();
 }
 
-function getDynamicAthenaBase() {
-  return BEND_URL?.trim().replace(/\/$/, "");
+function getDynamicAthenaBase(baseOverride) {
+  if (typeof baseOverride === "string" && baseOverride.trim()) {
+    return baseOverride.trim().replace(/\/$/, "");
+  }
+
+  if (typeof window !== "undefined") {
+    const fromWindow = window.BEND_URL;
+    if (typeof fromWindow === "string" && fromWindow.trim()) {
+      return fromWindow.trim().replace(/\/$/, "");
+    }
+  }
+
+  const fallback = getAthenaBase();
+  return fallback?.trim().replace(/\/$/, "");
 }
 
-export function getAthenaWebSocketUrl() {
-  const base = getDynamicAthenaBase();
+export function getAthenaWebSocketUrl(baseOverride) {
+  const base = getDynamicAthenaBase(baseOverride);
   
-  // If already ws/wss, use directly
-  if (/^wss?:\/\//i.test(base)) {
-    return base.replace(/\/+$/, '') + '/api/ws';
-  }
+  if (base) {
+    // If already ws/wss, use directly
+    if (/^wss?:\/\//i.test(base)) {
+      return base.replace(/\/+$/, '') + '/api/ws';
+    }
   
-  // Convert http(s) to ws(s)
-  if (/^https?:\/\//i.test(base)) {
-    const wsScheme = base.startsWith('https:') ? 'wss:' : 'ws:';
-    const hostPort = base.replace(/^https?:\/\//i, '');
-    return `${wsScheme}//${hostPort.replace(/\/+$/, '')}/api/ws`;
+    // Convert http(s) to ws(s)
+    if (/^https?:\/\//i.test(base)) {
+      const wsScheme = base.startsWith('https:') ? 'wss:' : 'ws:';
+      const hostPort = base.replace(/^https?:\/\//i, '');
+      return `${wsScheme}//${hostPort.replace(/\/+$/, '')}/api/ws`;
+    }
   }
   
   // Fallback: use current protocol
@@ -119,7 +133,6 @@ export const VISA_PROFILE = {
         },
     },
 };
-
 
 
 

@@ -64,6 +64,7 @@ let audioSender = null;
 let videoSender = null;
 let clientId = null;
 let sessionId = null;
+let signalingSocket = null;
 
 let overlayClipId = null;
 let overlayTimeout = null;
@@ -738,6 +739,68 @@ function waitForIceGatheringComplete(pc) {
   });
 }
 
+function closeSignalingSocket() {
+  if (!signalingSocket) return;
+  try { signalingSocket.close(); } catch { }
+  signalingSocket = null;
+}
+
+function sendSignalingMessage(payload) {
+  if (!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) return;
+  try { signalingSocket.send(JSON.stringify(payload)); } catch { }
+}
+
+async function exchangeOfferOverWebSocket(wsUrl, payload) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const socket = new WebSocket(wsUrl);
+    signalingSocket = socket;
+
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      try { socket.close(); } catch { }
+      signalingSocket = null;
+      reject(err);
+    };
+
+    const onMessage = (event) => {
+      let msg = null;
+      try { msg = JSON.parse(event.data); } catch {
+        log("[ws] Ignoring non-JSON signaling message");
+        return;
+      }
+      const msgType = (msg.type || msg.event || "").toString().toLowerCase();
+      if (msgType === "answer") {
+        settled = true;
+        socket.removeEventListener("message", onMessage);
+        resolve({ socket, answer: msg });
+        return;
+      }
+      if (msgType) {
+        log(`[ws] signaling message type=${msgType}`);
+      } else {
+        log("[ws] signaling message with no type");
+      }
+    };
+
+    socket.addEventListener("open", () => {
+      try {
+        socket.send(JSON.stringify(payload));
+      } catch (err) {
+        fail(err);
+      }
+    });
+
+    socket.addEventListener("message", onMessage);
+    socket.addEventListener("error", () => fail(new Error("Signaling WebSocket error")));
+    socket.addEventListener("close", (ev) => {
+      if (settled) return;
+      fail(new Error(`Signaling WebSocket closed (${ev.code}) before answer`));
+    });
+  });
+}
+
 function rs(v) {
   const map = ["HAVE_NOTHING", "HAVE_METADATA", "HAVE_CURRENT_DATA", "HAVE_FUTURE_DATA", "HAVE_ENOUGH_DATA"];
   return map[v?.readyState ?? 0] || `HAVE_${v?.readyState}`;
@@ -860,6 +923,7 @@ async function connect() {
     statusEl.textContent = "Connecting";
     showThreeDots();
     log("Creating RTCPeerConnection…");
+    closeSignalingSocket();
 
     pc = new RTCPeerConnection(RTC_CONFIG);
 
@@ -949,36 +1013,29 @@ async function connect() {
 
     console.log(ACTIVE_VISA_PROFILE);
 
-    const wsUrl = getAthenaWebSocketUrl();
+    const wsUrl = getAthenaWebSocketUrl(BEND_URL);
+    log(`[ws] Opening signaling socket: ${wsUrl}`);
 
-    const res = await fetch("", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sdp: pc.localDescription.sdp,
-        type: pc.localDescription.type,
-        character: ACTIVE_CHARACTER,
-        visa_profile: ACTIVE_VISA_PROFILE,
-        client_id: clientId,
-      }),
+    const { socket: ws, answer } = await exchangeOfferOverWebSocket(wsUrl, {
+      type: "offer",
+      sdp: pc.localDescription.sdp,
+      character: ACTIVE_CHARACTER,
+      visa_profile: ACTIVE_VISA_PROFILE,
+      client_id: clientId,
     });
+    signalingSocket = ws;
+    signalingSocket.addEventListener("close", (ev) => log(`[ws] closed (${ev.code})`));
 
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Offer failed: ${res.status} ${text}`);
-    }
+    const answerEnvelope = (answer && typeof answer === "object") ? answer : {};
+    if (answerEnvelope.success === false) throw new Error(`Offer failed: ${answerEnvelope.message || "backend error"}`);
 
-    const payload = await res.json();
-    if (!payload || typeof payload !== "object") throw new Error("Offer failed: Invalid JSON response");
-    if (payload.success === false) throw new Error(`Offer failed: ${payload.message || "backend error"}`);
-
-    const answerData = (payload.data && typeof payload.data === "object") ? payload.data : {};
-    const { sdp, type, client_id: idFromServer, session_id: sid } = answerData;
-    if (!sdp || !type) throw new Error("Offer failed: Missing SDP in response");
+    const answerData = (answerEnvelope.data && typeof answerEnvelope.data === "object") ? answerEnvelope.data : answerEnvelope;
+    const { sdp, type: answerType = "answer", client_id: idFromServer, session_id: sid } = answerData;
+    if (!sdp || !answerType) throw new Error("Offer failed: Missing SDP in response");
 
     if (typeof idFromServer === "string" && idFromServer) clientId = idFromServer;
     if (typeof sid === "string" && sid) sessionId = sid;
-    await pc.setRemoteDescription({ sdp, type });
+    await pc.setRemoteDescription({ sdp, type: answerType });
 
     setUIConnected(true);
     log(`Handshake complete. client_id=${clientId || "(n/a)"} session_id=${sessionId || "(n/a)"}`);
@@ -991,6 +1048,7 @@ async function connect() {
     log("ERROR: " + (err?.message || err), "err");
     statusEl.textContent = "Connection error.";
     setUIConnected(false);
+    closeSignalingSocket();
   }
 }
 
@@ -1059,6 +1117,7 @@ async function micOff() {
 
 async function bye(disconnect = true) {
   try { dcClient?.send("bye"); } catch { }
+  try { sendSignalingMessage({ type: "bye" }); } catch { }
   try {
     if (localStream) {
       for (const t of localStream.getTracks()) t.stop();
@@ -1069,6 +1128,7 @@ async function bye(disconnect = true) {
     await pc?.close();
   } catch { }
   pc = null; dc = null; dcClient = null;
+  closeSignalingSocket();
   sessionId = null;
   hideThreeDots();
   clearMedia();
@@ -1198,6 +1258,7 @@ btnBye.addEventListener("click", bye);
 
 window.addEventListener("beforeunload", () => {
   try { dcClient?.send("bye"); } catch { }
+  try { sendSignalingMessage({ type: "bye" }); } catch { }
 });
 
 window.addEventListener('DOMContentLoaded', () => {
