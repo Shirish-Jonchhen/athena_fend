@@ -107,6 +107,7 @@ const GIF_LINK_Q = urlParams.get("gif_link") || 'https://novawebbusiness.com/wp-
 
 const ACTIVE_CHARACTER = CHARACTER_Q;
 const ACTIVE_VISA_PROFILE = VISA_PROFILE_Q;
+console.log("Active visa profile = ", ACTIVE_VISA_PROFILE)
 
 const apiAthenaInput = document.getElementById("apiAthena");
 if (apiAthenaInput && BEND_URL) {
@@ -1007,7 +1008,7 @@ async function connect() {
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    // await waitForIceGatheringComplete(pc);
+    await waitForIceGatheringComplete(pc);
     // Do NOT wait for full ICE gathering here — send the offer immediately (trickle ICE or partial candidates).
     // Waiting for complete ICE can cause long delays (especially when TURN servers take time).
 
