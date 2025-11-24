@@ -1007,7 +1007,9 @@ async function connect() {
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await waitForIceGatheringComplete(pc);
+    // await waitForIceGatheringComplete(pc);
+    // Do NOT wait for full ICE gathering here — send the offer immediately (trickle ICE or partial candidates).
+    // Waiting for complete ICE can cause long delays (especially when TURN servers take time).
 
     clientId = clientId || getClientId();
 
