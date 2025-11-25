@@ -83,24 +83,76 @@ const REPORT_STORAGE_KEY = "voyage_latest_report";
 let reportRedirectTimer = null;
 let reportCompleteHandled = false;
 
+function tryParseJsonString(str) {
+  if (typeof str !== "string" || !str.trim()) return null;
+  try {
+    return JSON.parse(str);
+  } catch {
+    return null;
+  }
+}
+
+function attemptBase64Decode(value) {
+  if (typeof value !== "string") return null;
+  try {
+    return atob(value);
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeVisaProfileJsonish(raw) {
+  if (typeof raw !== "string") return null;
+  let sanitized = raw.trim();
+  if (!sanitized) return null;
+
+  sanitized = sanitized.replace(/[\n\r]+/g, " ");
+  sanitized = sanitized.replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":');
+  sanitized = sanitized.replace(/:\s*(?=[,}\]])/g, ": null");
+  sanitized = sanitized.replace(/:\s*'([^']*)'/g, ': "$1"');
+  sanitized = sanitized.replace(/:\s*([A-Za-z][A-Za-z0-9_()\s\-\.\/']*)(?=[,}])/g, (_m, val) => {
+    const trimmed = val.trim();
+    if (/^(true|false|null)$/i.test(trimmed)) return `: ${trimmed.toLowerCase()}`;
+    return `: "${trimmed}"`;
+  });
+  sanitized = sanitized.replace(/:\s*([0-9A-Za-z-]{8,})(?=[,}])/g, (_m, val) => {
+    const trimmed = val.trim();
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) return `: ${trimmed}`;
+    return `: "${trimmed}"`;
+  });
+  sanitized = sanitized.replace(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)/g, '"$1"');
+
+  return tryParseJsonString(sanitized);
+}
+
+function parseVisaProfileParam(param) {
+  if (!param) return null;
+
+  const direct = tryParseJsonString(param);
+  if (direct) return direct;
+
+  const decoded = attemptBase64Decode(param);
+  if (decoded) {
+    const decodedJson = tryParseJsonString(decoded);
+    if (decodedJson) return decodedJson;
+
+    const sanitizedDecoded = sanitizeVisaProfileJsonish(decoded);
+    if (sanitizedDecoded) return sanitizedDecoded;
+  }
+
+  return sanitizeVisaProfileJsonish(param);
+}
+
 // ===== Dynamic configuration from query params =====
 const urlParams = new URLSearchParams(window.location.search);
 
 const BEND_URL = urlParams.get("bend_url") || getAthenaBase();
 const FEND_URL = urlParams.get("fend_url") || window.location.origin;
-let VISA_PROFILE_Q;
-try {
-  const visaParam = urlParams.get("visa_profile");
-  console.log("Invalid visa_profile JSON in VISA params:",visaParam);
-
-const deecodedVisaProfile = atob(visaParam)
-  console.log("Invalid visa_profile DECODED JSON in VISA params:",deecodedVisaProfile);
-
-
-  VISA_PROFILE_Q = visaParam ? JSON.parse(deecodedVisaProfile) : VISA_PROFILE;
-} catch (err) {
-  console.warn("Invalid visa_profile JSON in query params:", err);
-  VISA_PROFILE_Q = VISA_PROFILE;
+const visaProfileParam = urlParams.get("visa_profile");
+const parsedVisaProfile = parseVisaProfileParam(visaProfileParam);
+const VISA_PROFILE_Q = parsedVisaProfile || VISA_PROFILE;
+if (visaProfileParam && !parsedVisaProfile) {
+  console.warn("[visa_profile] Could not parse query param, using default profile.");
 }
 const CHARACTER_Q = urlParams.get("character") || DEFAULT_CHARACTER;
 const GIF_LINK_Q = urlParams.get("gif_link") || 'https://novawebbusiness.com/wp-content/uploads/2022/12/Wow-gif.gif';
