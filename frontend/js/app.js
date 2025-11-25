@@ -779,19 +779,6 @@ function setUIConnected(connected) {
   }
 }
 
-function waitForIceGatheringComplete(pc) {
-  if (pc.iceGatheringState === "complete") return Promise.resolve();
-  return new Promise((resolve) => {
-    function check() {
-      if (pc.iceGatheringState === "complete") {
-        pc.removeEventListener("icegatheringstatechange", check);
-        resolve();
-      }
-    }
-    pc.addEventListener("icegatheringstatechange", check);
-  });
-}
-
 function closeSignalingSocket() {
   if (!signalingSocket) return;
   try { signalingSocket.close(); } catch { }
@@ -801,57 +788,6 @@ function closeSignalingSocket() {
 function sendSignalingMessage(payload) {
   if (!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) return;
   try { signalingSocket.send(JSON.stringify(payload)); } catch { }
-}
-
-async function exchangeOfferOverWebSocket(wsUrl, payload) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const socket = new WebSocket(wsUrl);
-    signalingSocket = socket;
-
-    const fail = (err) => {
-      if (settled) return;
-      settled = true;
-      try { socket.close(); } catch { }
-      signalingSocket = null;
-      reject(err);
-    };
-
-    const onMessage = (event) => {
-      let msg = null;
-      try { msg = JSON.parse(event.data); } catch {
-        log("[ws] Ignoring non-JSON signaling message");
-        return;
-      }
-      const msgType = (msg.type || msg.event || "").toString().toLowerCase();
-      if (msgType === "answer") {
-        settled = true;
-        socket.removeEventListener("message", onMessage);
-        resolve({ socket, answer: msg });
-        return;
-      }
-      if (msgType) {
-        log(`[ws] signaling message type=${msgType}`);
-      } else {
-        log("[ws] signaling message with no type");
-      }
-    };
-
-    socket.addEventListener("open", () => {
-      try {
-        socket.send(JSON.stringify(payload));
-      } catch (err) {
-        fail(err);
-      }
-    });
-
-    socket.addEventListener("message", onMessage);
-    socket.addEventListener("error", () => fail(new Error("Signaling WebSocket error")));
-    socket.addEventListener("close", (ev) => {
-      if (settled) return;
-      fail(new Error(`Signaling WebSocket closed (${ev.code}) before answer`));
-    });
-  });
 }
 
 function rs(v) {
@@ -1060,44 +996,155 @@ async function connect() {
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await waitForIceGatheringComplete(pc);
     // Do NOT wait for full ICE gathering here — send the offer immediately (trickle ICE or partial candidates).
     // Waiting for complete ICE can cause long delays (especially when TURN servers take time).
 
     clientId = clientId || getClientId();
-
     console.log(ACTIVE_VISA_PROFILE);
+
+    // Per-connection signaling buffers
+    const pendingSignalQueue = [];
+    const pendingRemoteCandidates = [];
+
+    const sendSignal = (payload) => {
+      if (!payload) return;
+      if (!signalingSocket || signalingSocket.readyState === WebSocket.CONNECTING) {
+        pendingSignalQueue.push(payload);
+        return;
+      }
+      if (signalingSocket.readyState !== WebSocket.OPEN) return;
+      try {
+        signalingSocket.send(JSON.stringify(payload));
+      } catch (err) {
+        log(`[ws] send failed: ${err?.message || err}`, "warn");
+      }
+    };
+
+    const flushPendingSignals = () => {
+      if (!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) return;
+      while (pendingSignalQueue.length) {
+        const msg = pendingSignalQueue.shift();
+        try {
+          signalingSocket.send(JSON.stringify(msg));
+        } catch (err) {
+          log(`[ws] send failed: ${err?.message || err}`, "warn");
+          break;
+        }
+      }
+    };
+
+    const processRemoteCandidates = async () => {
+      if (!pc || !pc.remoteDescription) return;
+      while (pendingRemoteCandidates.length) {
+        const cand = pendingRemoteCandidates.shift();
+        try {
+          await pc.addIceCandidate(cand);
+        } catch (err) {
+          log(`[ice] failed to add remote candidate: ${err?.message || err}`, "warn");
+        }
+      }
+    };
+
+    // Trickle ICE to backend
+    pc.onicecandidate = (ev) => {
+      if (ev?.candidate) {
+        log(`[ice] local candidate: ${ev.candidate.candidate}`);
+        sendSignal({
+          type: "candidate",
+          candidate: {
+            candidate: ev.candidate.candidate,
+            sdpMid: ev.candidate.sdpMid,
+            sdpMLineIndex: ev.candidate.sdpMLineIndex,
+            usernameFragment: ev.candidate.usernameFragment,
+          },
+        });
+      } else {
+        sendSignal({ type: "ice-complete" });
+      }
+    };
 
     const wsUrl = getAthenaWebSocketUrl(BEND_URL);
     log(`[ws] Opening signaling socket: ${wsUrl}`);
+    signalingSocket = new WebSocket(wsUrl);
 
-    const { socket: ws, answer } = await exchangeOfferOverWebSocket(wsUrl, {
-      type: "offer",
-      sdp: pc.localDescription.sdp,
-      character: ACTIVE_CHARACTER,
-      visa_profile: ACTIVE_VISA_PROFILE,
-      client_id: clientId,
+    let answerReceived = false;
+
+    signalingSocket.addEventListener("open", () => {
+      try {
+        signalingSocket.send(JSON.stringify({
+          type: "offer",
+          sdp: pc.localDescription.sdp,
+          character: ACTIVE_CHARACTER,
+          visa_profile: ACTIVE_VISA_PROFILE,
+          client_id: clientId,
+        }));
+        log("[ws] offer sent");
+      } catch (err) {
+        log(`[ws] failed to send offer: ${err?.message || err}`, "err");
+      }
+      flushPendingSignals();
     });
-    signalingSocket = ws;
-    signalingSocket.addEventListener("close", (ev) => log(`[ws] closed (${ev.code})`));
 
-    const answerEnvelope = (answer && typeof answer === "object") ? answer : {};
-    if (answerEnvelope.success === false) throw new Error(`Offer failed: ${answerEnvelope.message || "backend error"}`);
+    signalingSocket.addEventListener("message", async (event) => {
+      try {
+        let msg = null;
+        try {
+          msg = JSON.parse(event.data);
+        } catch {
+          log("[ws] Ignoring non-JSON signaling message");
+          return;
+        }
+        const msgType = (msg.type || msg.event || "").toString().toLowerCase();
 
-    const answerData = (answerEnvelope.data && typeof answerEnvelope.data === "object") ? answerEnvelope.data : answerEnvelope;
-    const { sdp, type: answerType = "answer", client_id: idFromServer, session_id: sid } = answerData;
-    if (!sdp || !answerType) throw new Error("Offer failed: Missing SDP in response");
+        if (msgType === "answer") {
+          answerReceived = true;
+          const answerEnvelope = (msg && typeof msg === "object") ? msg : {};
+          if (answerEnvelope.success === false) throw new Error(`Offer failed: ${answerEnvelope.message || "backend error"}`);
 
-    if (typeof idFromServer === "string" && idFromServer) clientId = idFromServer;
-    if (typeof sid === "string" && sid) sessionId = sid;
-    await pc.setRemoteDescription({ sdp, type: answerType });
+          const answerData = (answerEnvelope.data && typeof answerEnvelope.data === "object") ? answerEnvelope.data : answerEnvelope;
+          const { sdp, type: answerType = "answer", client_id: idFromServer, session_id: sid } = answerData;
+          if (!sdp || !answerType) throw new Error("Offer failed: Missing SDP in response");
 
-    setUIConnected(true);
-    log(`Handshake complete. client_id=${clientId || "(n/a)"} session_id=${sessionId || "(n/a)"}`);
-    log("You may toggle mic.");
-    startSessionTimer();
-    await new Promise(resolve => setTimeout(resolve, 2000)); micOff();
-    micOn();
+          if (typeof idFromServer === "string" && idFromServer) clientId = idFromServer;
+          if (typeof sid === "string" && sid) sessionId = sid;
+          await pc.setRemoteDescription({ sdp, type: answerType });
+          await processRemoteCandidates();
+          setUIConnected(true);
+          log(`Handshake complete. client_id=${clientId || "(n/a)"} session_id=${sessionId || "(n/a)"}`);
+          log("You may toggle mic.");
+          startSessionTimer();
+          await new Promise(resolve => setTimeout(resolve, 2000)); micOff();
+          micOn();
+        } else if (msgType === "candidate") {
+          const cand = msg.candidate;
+          if (cand) {
+            pendingRemoteCandidates.push(new RTCIceCandidate(cand));
+            await processRemoteCandidates();
+          }
+        } else if (msgType === "ice-complete") {
+          pendingRemoteCandidates.push(null);
+          await processRemoteCandidates();
+        } else if (msgType === "error") {
+          const errorMsg = msg.message || "Unknown error";
+          throw new Error(`Server error: ${errorMsg}`);
+        } else if (msgType) {
+          log(`[ws] signaling message type=${msgType}`);
+        } else {
+          log("[ws] signaling message with no type");
+        }
+      } catch (err) {
+        console.error(err);
+        log(`[ws] Error: ${err?.message || err}`, "err");
+      }
+    });
+
+    signalingSocket.addEventListener("error", () => log("[ws] Signaling WebSocket error", "err"));
+    signalingSocket.addEventListener("close", (ev) => {
+      log(`[ws] closed (${ev.code})`);
+      if (!answerReceived) setUIConnected(false);
+      signalingSocket = null;
+    });
+
   } catch (err) {
     console.error(err);
     log("ERROR: " + (err?.message || err), "err");
