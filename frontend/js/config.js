@@ -63,20 +63,20 @@ export function getAthenaWebSocketUrl(baseOverride) {
   if (base) {
     // If already ws/wss, use directly
     if (/^wss?:\/\//i.test(base)) {
-      return base.replace(/\/+$/, '') + '/api/ws';
+      return base.replace(/\/+$/, '') + '/api/ws-offer';
     }
   
     // Convert http(s) to ws(s)
     if (/^https?:\/\//i.test(base)) {
       const wsScheme = base.startsWith('https:') ? 'wss:' : 'ws:';
       const hostPort = base.replace(/^https?:\/\//i, '');
-      return `${wsScheme}//${hostPort.replace(/\/+$/, '')}/api/ws`;
+      return `${wsScheme}//${hostPort.replace(/\/+$/, '')}/api/ws-offer`;
     }
   }
   
   // Fallback: use current protocol
   const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${wsProtocol}//${location.host}/api/ws`;
+  return `${wsProtocol}//${location.host}/api/ws-offer`;
 }
 
 
