@@ -65,6 +65,8 @@ let videoSender = null;
 let clientId = null;
 let sessionId = null;
 let signalingSocket = null;
+let signalingHandshakeComplete = false;
+let signalingCloseExpected = false;
 
 let overlayClipId = null;
 let overlayTimeout = null;
@@ -1001,6 +1003,8 @@ async function connect() {
 
     clientId = clientId || getClientId();
     console.log(ACTIVE_VISA_PROFILE);
+    signalingHandshakeComplete = false;
+    signalingCloseExpected = false;
 
     // Per-connection signaling buffers
     const pendingSignalQueue = [];
@@ -1066,6 +1070,9 @@ async function connect() {
     const wsUrl = getAthenaWebSocketUrl(BEND_URL);
     log(`[ws] Opening signaling socket: ${wsUrl}`);
     signalingSocket = new WebSocket(wsUrl);
+    const isExpectedSignalClose = (ev) => ev?.code === 1000
+      && typeof ev.reason === "string"
+      && ev.reason.toLowerCase().includes("webrtc connected");
 
     let answerReceived = false;
 
@@ -1109,6 +1116,7 @@ async function connect() {
           if (typeof sid === "string" && sid) sessionId = sid;
           await pc.setRemoteDescription({ sdp, type: answerType });
           await processRemoteCandidates();
+          signalingHandshakeComplete = true;
           setUIConnected(true);
           log(`Handshake complete. client_id=${clientId || "(n/a)"} session_id=${sessionId || "(n/a)"}`);
           log("You may toggle mic.");
@@ -1138,10 +1146,21 @@ async function connect() {
       }
     });
 
-    signalingSocket.addEventListener("error", () => log("[ws] Signaling WebSocket error", "err"));
+    signalingSocket.addEventListener("error", () => {
+      if (signalingCloseExpected || (signalingHandshakeComplete && signalingSocket?.readyState === WebSocket.CLOSED)) {
+        return;  // ignore errors triggered by intentional close after P2P connect
+      }
+      log("[ws] Signaling WebSocket error", "err");
+      if (!signalingHandshakeComplete) setUIConnected(false);
+    });
     signalingSocket.addEventListener("close", (ev) => {
-      log(`[ws] closed (${ev.code})`);
-      if (!answerReceived) setUIConnected(false);
+      signalingCloseExpected = isExpectedSignalClose(ev);
+      if (signalingCloseExpected) {
+        log("[ws] signaling socket closed after WebRTC connected");
+      } else {
+        log(`[ws] closed (${ev.code})`);
+        if (!answerReceived) setUIConnected(false);
+      }
       signalingSocket = null;
     });
 
