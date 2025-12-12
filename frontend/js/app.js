@@ -17,7 +17,6 @@ const transcriptFinalEl = document.getElementById("final_text");
 const transcriptInterimEl = document.getElementById("interim_text");
 
 const avatarVideo = document.getElementById("avatarVideo");
-const overlayVideo = document.getElementById("overlayVideo");
 const videoStatus = document.getElementById("videoStatus");
 const replyTextEl = document.getElementById("characterReplyText");
 
@@ -69,8 +68,8 @@ let signalingHandshakeComplete = false;
 let signalingCloseExpected = false;
 
 let overlayClipId = null;
-let overlayTimeout = null;
 let overlayMediaToken = null;
+let streamingTimer = null;
 
 let lastSttIdx = -1;
 let interimBuffer = "";
@@ -439,16 +438,6 @@ function setVideoStatus(text, show = true) {
   videoStatus.classList.toggle("hidden", !show);
 }
 
-function resolveMediaUrl(path) {
-  if (!path) return null;
-  if (/^https?:/i.test(path)) return path;
-  const base = (getAthenaBase() || "").trim();
-  if (!base) return path;
-  const normalized = base.endsWith("/") ? base.slice(0, -1) : base;
-  if (path.startsWith("/")) return `${normalized}${path}`;
-  return `${normalized}/${path}`;
-}
-
 function clamp(value, min, max) {
   const num = Number(value);
   if (Number.isNaN(num)) return min;
@@ -527,53 +516,6 @@ function updateReportProgress(progress, info = "") {
   }
 }
 
-function isNgrokUrl(url) {
-  try {
-    const u = new URL(url);
-    return u.hostname.includes("ngrok");
-  } catch { return false; }
-}
-
-async function fetchVideoAsBlob(url) {
-  const headers = {};
-  if (isNgrokUrl(url)) {
-    headers["ngrok-skip-browser-warning"] = "true";
-  }
-  const res = await fetch(url, { headers, mode: "cors", cache: "no-store" });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const ctype = (res.headers.get("content-type") || "").toLowerCase();
-  if (ctype.includes("text/html")) {
-    throw new Error(`ngrok warning page (content-type ${ctype})`);
-  }
-  return await res.blob();
-}
-
-async function probeMedia(url) {
-  if (!DEBUG_MEDIA_PROBE) return;
-  try {
-    const headers = {};
-    if (isNgrokUrl(url)) headers["ngrok-skip-browser-warning"] = "true";
-    log(`[probe] ${url}`);
-    const res = await fetch(url, { headers, mode: "cors", cache: "no-store" });
-    log(`[probe] status=${res.status} (${res.statusText || ""})`);
-    const ct = res.headers.get("content-type") || "(n/a)";
-    const ar = res.headers.get("accept-ranges") || "(n/a)";
-    const cl = res.headers.get("content-length") || "(n/a)";
-    const server = res.headers.get("server") || "(n/a)";
-    const cache = res.headers.get("cache-control") || "(n/a)";
-    log(`[probe] content-type=${ct} accept-ranges=${ar} content-length=${cl} cache=${cache} server=${server}`);
-    try { res.body?.cancel?.(); } catch { }
-    if (ct && !ct.startsWith("video/") && ct !== "application/octet-stream") {
-      log("[media] WARNING: content-type looks non-video: " + ct);
-    }
-    if (ar !== "bytes") {
-      log('[media] NOTE: accept-ranges is not "bytes" — some browsers prefer ranged playback');
-    }
-  } catch (e) {
-    log(`[probe] failed: ${e.message}`, "warn");
-  }
-}
-
 function createVideoLoadingOverlay() {
   let loadingOverlay = document.querySelector('.video-loading-overlay');
   if (loadingOverlay) return loadingOverlay;
@@ -616,115 +558,35 @@ function ensureGifVisible() {
 }
 
 function clearOverlay() {
-  if (!overlayVideo) return;
   overlayClipId = null;
-  if (overlayTimeout) {
-    clearTimeout(overlayTimeout);
-    overlayTimeout = null;
-  }
-  try { overlayVideo.pause(); } catch { }
-  if (overlayVideo.dataset.objectUrl) {
-    try { URL.revokeObjectURL(overlayVideo.dataset.objectUrl); } catch { }
-    delete overlayVideo.dataset.objectUrl;
-  }
-  delete overlayVideo.dataset.mediaToken;
   overlayMediaToken = null;
-  overlayVideo.removeAttribute("src");
-  overlayVideo.load();
-  overlayVideo.classList.remove("active");
-
+  if (streamingTimer) {
+    clearTimeout(streamingTimer);
+    streamingTimer = null;
+  }
   showVideoLoadingGif();
-}
-
-function scheduleOverlayTeardown(durationMs) {
-  if (overlayTimeout) {
-    clearTimeout(overlayTimeout);
-    overlayTimeout = null;
-  }
-  if (durationMs > 0) {
-    overlayTimeout = window.setTimeout(() => {
-      clearOverlay();
-    }, durationMs);
-  }
-}
-
-async function playOverlayClip(payload) {
-  if (!overlayVideo) return;
-  const url = resolveMediaUrl(payload?.url);
-  if (!url) return;
-
-  if (overlayClipId && overlayClipId !== (payload?.clip_id || null)) {
-    clearOverlay();
-  }
-
-  overlayClipId = payload?.clip_id || null;
-  const tokenFromPayload = payload?.media_token || payload?.extras?.media_token || null;
-  overlayMediaToken = tokenFromPayload || extractTokenFromUrl(url);
-  if (overlayMediaToken) overlayVideo.dataset.mediaToken = overlayMediaToken;
-
-  ensureGifVisible();
-
-  {
-    const pageIsHttps = window.isSecureContext || location.protocol === "https:";
-    log(`[diag] page.origin=${location.origin} secure=${window.isSecureContext} pageIsHttps=${pageIsHttps}`);
-    const base = (getAthenaBase() || "").trim();
-    if (base) {
-      try {
-        const u = new URL(base);
-        log(`[diag] athenaBase=${base}`);
-        log(`[diag] athenaBase.origin=${u.origin} protocol=${u.protocol}`);
-      } catch {
-        log(`[diag] athenaBase=${base}`);
-      }
-    }
-  }
-
-  if (DEBUG_MEDIA_PROBE) await probeMedia(url);
-
-  overlayVideo.muted = false;
-  overlayVideo.classList.add("active");
-
-  try {
-    const blob = await fetchVideoAsBlob(url);
-    const objectUrl = URL.createObjectURL(blob);
-    overlayVideo.src = objectUrl;
-    overlayVideo.dataset.objectUrl = objectUrl;
-  } catch (e) {
-    log(`[media] ngrok fetch bypass failed: ${e.message}`, "warn");
-    overlayVideo.src = url;
-  }
-
-  overlayVideo.currentTime = 0;
-
-  const promise = overlayVideo.play();
-
-  if (promise && typeof promise.then === "function") {
-    promise
-      .then(() => {
-        setVideoStatus("", false);
-        hideVideoLoadingGif();
-      })
-      .catch((err) => {
-        log(`Overlay playback blocked: ${err?.message || err}`, "warn");
-        setVideoStatus("Tap to play response", true);
-        ensureGifVisible();
-      });
-  }
-}
-
-function stopOverlayClip(payload) {
-  const clipId = payload?.clip_id;
-  if (clipId && overlayClipId && clipId !== overlayClipId) return;
-  clearOverlay();
 }
 
 function handleMedia(data) {
   const status = (data?.status || "").toLowerCase();
+  const token = data?.media_token || data?.extras?.media_token || null;
+  const duration = data?.duration;
+
   if (status === "start") {
-    log(`[media] start clip id=${data?.clip_id || "(none)"} url=${resolveMediaUrl(data?.url)}`);
-    playOverlayClip(data);
+    clearOverlay();
+    overlayClipId = data?.clip_id || null;
+    overlayMediaToken = token;
+    const ms = Number.isFinite(duration) ? Math.max(0, Math.round(duration * 1000)) : 0;
+    if (token && ms > 0) {
+      streamingTimer = window.setTimeout(() => {
+        try { dcClient?.send("media:completed", { media_token: token }); } catch { }
+      }, ms + 150);
+    }
+    log(`[media] start (stream) clip=${overlayClipId || "(none)"} duration=${duration ?? "?"}s`);
+    hideVideoLoadingGif();
   } else if (status === "stop") {
-    stopOverlayClip(data);
+    clearOverlay();
+    log("[media] stop");
   }
 }
 
@@ -822,55 +684,7 @@ function wireVideoDiagnostics(el, label) {
 }
 
 wireVideoDiagnostics(avatarVideo, "avatar");
-wireVideoDiagnostics(overlayVideo, "overlay");
-
-if (overlayVideo) {
-  overlayVideo.addEventListener('loadstart', () => {
-    ensureGifVisible();
-    log('[video:overlay] loadstart - ensuring GIF visible');
-  });
-
-  overlayVideo.addEventListener('canplay', () => {
-    log('[video:overlay] canplay - video ready but keeping GIF until playing');
-  });
-
-  overlayVideo.addEventListener('playing', () => {
-    hideVideoLoadingGif();
-    log('[video:overlay] playing - hiding GIF');
-  });
-
-  overlayVideo.addEventListener('waiting', () => {
-    showVideoLoadingGif();
-    log('[video:overlay] waiting (buffering) - showing GIF');
-  });
-
-  overlayVideo.addEventListener('pause', () => {
-    showVideoLoadingGif();
-    log('[video:overlay] paused - showing GIF');
-  });
-
-  overlayVideo.addEventListener("ended", () => {
-    const token = overlayVideo.dataset.mediaToken || overlayMediaToken;
-    if (token) {
-      try { dcClient?.send("media:completed", { media_token: token }); } catch { }
-      log(`[media] completed (sent) token=${token}`);
-    } else {
-      log("[media] ended but no token to report", "warn");
-    }
-
-    showVideoLoadingGif();
-
-    if (overlayClipId) stopOverlayClip({ clip_id: overlayClipId });
-    else clearOverlay();
-  });
-
-  overlayVideo.addEventListener("error", () => {
-    log("Overlay playback error", "err");
-    showVideoLoadingGif();
-    clearOverlay();
-    setVideoStatus("Media playback error", true);
-  });
-}
+// No overlay diagnostics needed; media streams over the main tracks.
 
 if (avatarVideo) {
   avatarVideo.addEventListener('loadstart', () => {
@@ -974,7 +788,7 @@ async function connect() {
 
     remoteStream = new MediaStream();
     avatarVideo.srcObject = remoteStream;
-    avatarVideo.muted = true;
+    avatarVideo.muted = false;
 
     pc.ontrack = (ev) => {
       remoteStream.addTrack(ev.track);
