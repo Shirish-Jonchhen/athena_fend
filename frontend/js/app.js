@@ -897,9 +897,10 @@ async function connect() {
           sdp: pc.localDescription.sdp,
           character: ACTIVE_CHARACTER,
           visa_profile: ACTIVE_VISA_PROFILE,
-          client_id: clientId,
+          client_id: ACTIVE_VISA_PROFILE.id,
         }));
         log("[ws] offer sent");
+        console.log("[ws] offer sent with client id as = ", ACTIVE_VISA_PROFILE.id);
       } catch (err) {
         log(`[ws] failed to send offer: ${err?.message || err}`, "err");
       }
